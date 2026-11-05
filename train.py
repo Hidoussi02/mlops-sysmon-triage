@@ -1,12 +1,14 @@
 """
-train.py - Sysmon command-line classifier (0 = normal, 1 = malicious)
+train.py (v2) - Wazuh alert triage classifier (0 = normal, 1 = malicious)
 
 What this script does, in order:
   1. Loads the labeled CSV                      (data/win10_dataset_labeled.csv)
-  2. Anonymizes usernames                       (privacy, NFR-09)
-  3. Splits into train / test                   (by run/technique if a column exists)
+  2. Anonymizes usernames                       (privacy)
+  3. Splits into train / test so that:
+        - both classes are present in the test set
+        - all alerts of one attack technique stay on the same side
   4. Trains a BASELINE (Logistic Regression) and a CANDIDATE (XGBoost)
-     on TF-IDF features extracted from the CommandLine column
+     on TF-IDF features extracted from the rule_description column
   5. Logs parameters, metrics and the model to MLflow
   6. Registers the XGBoost model in the MLflow Model Registry
 
@@ -20,12 +22,13 @@ from pathlib import Path
 
 import mlflow
 import mlflow.sklearn
+import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (average_precision_score, f1_score,
-                             precision_score, recall_score)
-from sklearn.model_selection import GroupShuffleSplit, train_test_split
+from sklearn.metrics import (average_precision_score, confusion_matrix,
+                             f1_score, precision_score, recall_score)
+from sklearn.model_selection import StratifiedGroupKFold, train_test_split
 from sklearn.pipeline import Pipeline
 from xgboost import XGBClassifier
 
@@ -33,13 +36,14 @@ from xgboost import XGBClassifier
 # Settings - change these if your CSV uses other column names
 # ----------------------------------------------------------------------------
 CSV_PATH = sys.argv[1] if len(sys.argv) > 1 else "data/win10_dataset_labeled.csv"
-TEXT_COL = "rule_description"
+TEXT_COL = "rule_description"          # the text the model learns from
 LABEL_CANDIDATES = ["label", "is_malicious", "malicious", "target", "class"]
-GROUP_CANDIDATES = ["run_id", "runid", "run", "technique_id", "technique"]
+GROUP_CANDIDATES = ["technique_id", "technique", "run_id", "runid", "run"]
 USER_COLS = ["User", "UserName", "user"]
 SEED = 42
-TEST_SIZE = 0.25
-MLFLOW_URI = "sqlite:///mlflow.db"   # local database, supports the Model Registry
+N_FOLDS = 4                            # one fold (~25%) becomes the test set
+N_RANDOM_GROUPS = 40                   # normal alerts are spread over this many groups
+MLFLOW_URI = "sqlite:///mlflow.db"     # local database, supports the Model Registry
 EXPERIMENT = "sysmon-triage"
 REGISTERED_NAME = "sysmon-xgb-classifier"
 
@@ -73,10 +77,11 @@ def load_data(path):
     positive_words = {"1", "1.0", "malicious", "attack", "suspicious", "true", "yes"}
     df["label"] = df[label_col].astype(str).str.strip().str.lower().isin(positive_words).astype(int)
     df["text"] = df[text_col].fillna("").astype(str)
-    df = df[df["text"].str.len() > 0].reset_index(drop=True)   # drop empty events
+    df = df[df["text"].str.len() > 0].reset_index(drop=True)   # drop empty rows
 
     print("Label counts (0 = normal, 1 = malicious):")
     print(df["label"].value_counts().to_string())
+    print(f"Distinct texts: {df['text'].nunique()} (of {len(df)} rows)")
     if df["label"].nunique() < 2:
         sys.exit("ERROR: only one class found in the label column. Check the label values above.")
     return df
@@ -99,32 +104,53 @@ def anonymize(df):
 # ----------------------------------------------------------------------------
 # 3. Split
 # ----------------------------------------------------------------------------
+def make_groups(df):
+    """
+    Build a group id for every row.
+    - Rows that have a technique (attacks) keep it: one technique = one group,
+      so the same attack never appears in both train and test.
+    - Rows WITHOUT a technique (mostly normal activity) would all fall into one
+      giant group, which makes the split lopsided. We spread them over
+      N_RANDOM_GROUPS random groups instead.
+    """
+    rng = np.random.default_rng(SEED)
+    col = find_col(df, GROUP_CANDIDATES)
+    if col is None:
+        return None, None
+    raw = df[col].astype(str).str.strip()
+    missing = df[col].isna() | raw.str.lower().isin(["", "nan", "none", "normal_activity"])
+    groups = raw.copy()
+    random_ids = rng.integers(0, N_RANDOM_GROUPS, size=len(df))
+    groups[missing] = [f"unassigned_{df['label'].iat[i]}_{random_ids[i]}"
+                       for i in np.flatnonzero(missing.to_numpy())]
+    return groups, col
+
+
 def split(df):
-    group_col = find_col(df, GROUP_CANDIDATES)
-    if group_col is not None:
-        print(f"Splitting by '{group_col}' (no run appears in both train and test).")
-        df[group_col] = df[group_col].fillna("normal_activity")
-        gss = GroupShuffleSplit(n_splits=1, test_size=TEST_SIZE, random_state=SEED)
-        train_idx, test_idx = next(gss.split(df, df["label"], groups=df[group_col]))
-        train, test = df.iloc[train_idx], df.iloc[test_idx]
-        mode = f"group:{group_col}"
-    else:
-        print("WARNING: no run/technique column found -> random stratified split.\n"
-              "         Scores may be optimistic (similar events in train and test).\n"
-              "         Mention this limitation in your report.")
-        train, test = train_test_split(df, test_size=TEST_SIZE, random_state=SEED,
-                                       stratify=df["label"])
-        mode = "random_stratified"
-    if test["label"].nunique() < 2:
-        print("WARNING: the test set has only one class; PR-AUC will not be computed.")
-    return train, test, mode
+    groups, col = make_groups(df)
+    if groups is not None:
+        print(f"Splitting by '{col}' (an attack technique never appears in both sets).")
+        sgkf = StratifiedGroupKFold(n_splits=N_FOLDS, shuffle=True, random_state=SEED)
+        for train_idx, test_idx in sgkf.split(df, df["label"], groups=groups):
+            train, test = df.iloc[train_idx], df.iloc[test_idx]
+            # keep the first fold that has malicious rows on BOTH sides
+            if test["label"].sum() > 0 and train["label"].sum() > 0:
+                return train, test, f"stratified_group:{col}"
+        print("WARNING: could not find a group split with attacks on both sides.")
+
+    print("WARNING: using a random stratified split instead.\n"
+          "         Similar alerts may sit in both train and test, so scores can be\n"
+          "         optimistic. Mention this limitation in your report.")
+    train, test = train_test_split(df, test_size=1 / N_FOLDS, random_state=SEED,
+                                   stratify=df["label"])
+    return train, test, "random_stratified"
 
 
 # ----------------------------------------------------------------------------
 # 4. Models
 # ----------------------------------------------------------------------------
 def make_tfidf():
-    # Character n-grams capture obfuscation (e.g. encoded PowerShell, odd casing)
+    # Character n-grams are robust to small wording differences
     return TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5),
                            max_features=20000, sublinear_tf=True)
 
@@ -138,7 +164,7 @@ def build_baseline():
 
 def build_xgboost(y_train):
     neg, pos = (y_train == 0).sum(), (y_train == 1).sum()
-    spw = float(neg / pos) if pos else 1.0      # compensates class imbalance
+    spw = float(neg / pos) if pos else 1.0      # compensates the class imbalance
     return Pipeline([
         ("tfidf", make_tfidf()),
         ("clf", XGBClassifier(n_estimators=200, max_depth=6, learning_rate=0.1,
@@ -162,7 +188,7 @@ def dvc_hash(csv_path):
 
 def log_model(pipeline, register):
     # cloudpickle: newer MLflow versions block XGBoost types in their default format.
-    # Safe here because we only ever load our own models (see security note in the report).
+    # Safe here because we only ever load our own models.
     kwargs = {"serialization_format": "cloudpickle"}
     if register:
         kwargs["registered_model_name"] = REGISTERED_NAME
@@ -172,7 +198,7 @@ def log_model(pipeline, register):
         mlflow.sklearn.log_model(pipeline, artifact_path="model", **kwargs)
 
 
-def run_experiment(run_name, pipeline, train, test, split_mode, register=False):
+def run_experiment(run_name, pipeline, train, test, split_mode, overlap, register=False):
     with mlflow.start_run(run_name=run_name):
         pipeline.fit(train["text"], train["label"])
         y_pred = pipeline.predict(test["text"])
@@ -189,13 +215,18 @@ def run_experiment(run_name, pipeline, train, test, split_mode, register=False):
         mlflow.log_params({
             "model": run_name, "split": split_mode, "seed": SEED,
             "n_train": len(train), "n_test": len(test),
-            "tfidf_ngrams": "char_wb 3-5", "dataset": CSV_PATH,
-            "dataset_dvc_md5": dvc_hash(CSV_PATH),
+            "n_train_malicious": int(train["label"].sum()),
+            "n_test_malicious": int(test["label"].sum()),
+            "test_text_overlap_with_train": round(overlap, 3),
+            "tfidf_ngrams": "char_wb 3-5", "text_column": TEXT_COL,
+            "dataset": CSV_PATH, "dataset_dvc_md5": dvc_hash(CSV_PATH),
         })
         mlflow.log_metrics(metrics)
         log_model(pipeline, register)
 
+        tn, fp, fn, tp = confusion_matrix(test["label"], y_pred, labels=[0, 1]).ravel()
         print(f"\n[{run_name}] " + "  ".join(f"{k}={v:.3f}" for k, v in metrics.items()))
+        print(f"    confusion matrix: TP={tp} FN={fn} FP={fp} TN={tn}")
 
 
 # ----------------------------------------------------------------------------
@@ -205,12 +236,20 @@ def main():
     df = anonymize(load_data(CSV_PATH))
     train, test, split_mode = split(df)
 
+    # How many test texts also appear word-for-word in train?
+    # High overlap = the model is mostly doing a lookup, so scores are optimistic.
+    overlap = test["text"].isin(set(train["text"])).mean()
+
+    print(f"\nTrain: {len(train)} rows ({int(train['label'].sum())} malicious)")
+    print(f"Test : {len(test)} rows ({int(test['label'].sum())} malicious)")
+    print(f"Test texts identical to a train text: {overlap:.0%}")
+
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT)
 
-    run_experiment("baseline_logreg", build_baseline(), train, test, split_mode)
+    run_experiment("baseline_logreg", build_baseline(), train, test, split_mode, overlap)
     run_experiment("xgboost", build_xgboost(train["label"]), train, test, split_mode,
-                   register=True)
+                   overlap, register=True)
 
     print("\nDone. See the runs with:\n"
           f"    mlflow ui --backend-store-uri {MLFLOW_URI}\n"
