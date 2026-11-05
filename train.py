@@ -33,7 +33,7 @@ from xgboost import XGBClassifier
 # Settings - change these if your CSV uses other column names
 # ----------------------------------------------------------------------------
 CSV_PATH = sys.argv[1] if len(sys.argv) > 1 else "data/win10_dataset_labeled.csv"
-TEXT_COL = "CommandLine"
+TEXT_COL = "rule_description"
 LABEL_CANDIDATES = ["label", "is_malicious", "malicious", "target", "class"]
 GROUP_CANDIDATES = ["run_id", "runid", "run", "technique_id", "technique"]
 USER_COLS = ["User", "UserName", "user"]
@@ -103,6 +103,7 @@ def split(df):
     group_col = find_col(df, GROUP_CANDIDATES)
     if group_col is not None:
         print(f"Splitting by '{group_col}' (no run appears in both train and test).")
+        df[group_col] = df[group_col].fillna("normal_activity")
         gss = GroupShuffleSplit(n_splits=1, test_size=TEST_SIZE, random_state=SEED)
         train_idx, test_idx = next(gss.split(df, df["label"], groups=df[group_col]))
         train, test = df.iloc[train_idx], df.iloc[test_idx]
