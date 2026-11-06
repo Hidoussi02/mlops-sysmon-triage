@@ -16,6 +16,7 @@ Usage:
     python train.py                      # uses data/win10_dataset_labeled.csv
     python train.py path/to/other.csv    # uses another file
 """
+import os
 import re
 import sys
 from pathlib import Path
@@ -43,6 +44,9 @@ USER_COLS = ["User", "UserName", "user"]
 SEED = 42
 N_FOLDS = 4                            # one fold (~25%) becomes the test set
 N_RANDOM_GROUPS = 40                   # normal alerts are spread over this many groups
+# "group"      = keep each attack technique on one side (strict, but needs many techniques)
+# "stratified" = random split that keeps the malicious ratio equal on both sides
+SPLIT_MODE = os.getenv("SPLIT_MODE", "group")
 MLFLOW_URI = "sqlite:///mlflow.db"     # local database, supports the Model Registry
 EXPERIMENT = "sysmon-triage"
 REGISTERED_NAME = "sysmon-xgb-classifier"
@@ -127,7 +131,7 @@ def make_groups(df):
 
 
 def split(df):
-    groups, col = make_groups(df)
+    groups, col = make_groups(df) if SPLIT_MODE == "group" else (None, None)
     if groups is not None:
         print(f"Splitting by '{col}' (an attack technique never appears in both sets).")
         sgkf = StratifiedGroupKFold(n_splits=N_FOLDS, shuffle=True, random_state=SEED)
@@ -138,7 +142,7 @@ def split(df):
                 return train, test, f"stratified_group:{col}"
         print("WARNING: could not find a group split with attacks on both sides.")
 
-    print("WARNING: using a random stratified split instead.\n"
+    print("NOTE: using a random stratified split.\n"
           "         Similar alerts may sit in both train and test, so scores can be\n"
           "         optimistic. Mention this limitation in your report.")
     train, test = train_test_split(df, test_size=1 / N_FOLDS, random_state=SEED,
