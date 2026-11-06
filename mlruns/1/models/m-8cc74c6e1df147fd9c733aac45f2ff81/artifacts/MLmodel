@@ -1,0 +1,23 @@
+artifact_path: file:C:/Users/user/OneDrive/Desktop/mlops_sysmon_project/mlruns/1/models/m-8cc74c6e1df147fd9c733aac45f2ff81/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.13.14
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.9.1
+    skops_trusted_types: null
+mlflow_version: 3.18.0
+model_id: m-8cc74c6e1df147fd9c733aac45f2ff81
+model_size_bytes: 114172
+model_uuid: m-8cc74c6e1df147fd9c733aac45f2ff81
+prompts: null
+run_id: bd30da7b497949bc8abf7ce0fc9c4a38
+utc_time_created: '2026-11-05 23:16:21.836258'

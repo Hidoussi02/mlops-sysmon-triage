@@ -1,0 +1,21 @@
+services:
+  sysmon-api:
+    build: .
+    image: sysmon-triage-api:latest
+    ports:
+      - "127.0.0.1:5000:5000"        # reachable only from this machine
+    volumes:
+      - ./model:/app/model:ro        # trained model, read-only
+    environment:
+      MODEL_DIR: /app/model
+      INPUT_FIELD: rule_description
+      THRESHOLD: "0.5"
+    # Hardening (good points to mention to the jury)
+    read_only: true                  # container filesystem cannot be modified
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL                          # no Linux privileges
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

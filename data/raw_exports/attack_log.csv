@@ -1,0 +1,6 @@
+technique_id,technique_name,start_time,end_time,source
+T1087.001,Local_Accoount Discovery,2026-09-26 20:11:49,2026-09-26 20:11:49,atomic
+T1053.005,scheduled Task Persistence,2026-09-26 20:12:49,2026-09-26 20:12:49,atomic
+T1003.001,LSSAS Memory Dump,2026-09-26 20:16:46,2026-09-26 20:16:47,atomic
+T1110.001,brute_force_smb,2026-09-26 15:26:15,2026-09-26 15:26:26,kali
+T1046,network_scanning,2026-09-26 15:26:26,2026-09-26 15:26:44,kali 
