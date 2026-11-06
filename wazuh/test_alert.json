@@ -1,0 +1,8 @@
+{
+    "timestamp":"2026-11-06T10:00:00.000+0000",
+    "rule":{"level":5,"description":"powershell.exe -enc JABz5AGUAbgBj -nop -w hidden IEX(New-Object Net.WebClient)",
+    "id":"92000","groups":["sysmon"]},
+    "agent":{"id":"001","name":"win10-lab",
+    "ip":"192.168.1.20"},"manager":{"name":"wazuh-manager"},
+    "id":"1730000000.123","location":"EventChannel"
+}

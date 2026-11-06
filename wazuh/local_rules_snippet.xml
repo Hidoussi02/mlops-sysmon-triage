@@ -1,0 +1,18 @@
+<!-- Add to /var/ossec/etc/rules/local_rules.xml (IDs 100900-100901: check they are free) -->
+<group name="mlops,triage,">
+
+  <!-- Parent rule: any event injected by the triage integration -->
+  <rule id="100900" level="3">
+    <decoded_as>json</decoded_as>
+    <field name="integration">mlops_triage</field>
+    <description>MLOps triage event received</description>
+  </rule>
+
+  <!-- The model classified the original alert as malicious -->
+  <rule id="100901" level="12">
+    <if_sid>100900</if_sid>
+    <field name="mlops_triage.prediction">1</field>
+    <description>ML triage: alert classified as likely malicious - $(mlops_triage.source_description)</description>
+  </rule>
+
+</group>

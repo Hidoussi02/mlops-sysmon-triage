@@ -1,0 +1,7 @@
+<!-- Add inside <ossec_config> in /var/ossec/etc/ossec.conf -->
+<integration>
+  <name>custom-mlops-triage</name>
+  <hook_url>http://127.0.0.1:5000/predict</hook_url>
+  <level>3</level>                       <!-- forward alerts of level 3 and above -->
+  <alert_format>json</alert_format>
+</integration>
