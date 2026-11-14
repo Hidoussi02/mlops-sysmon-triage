@@ -18,7 +18,7 @@ WORKDIR /app
 
 # Install dependencies first (Docker caches this layer if requirements don't change)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout=300 --retries=10 -r requirements.txt
 
 # Only the API code goes in the image; the model is mounted at run time
 COPY app.py .
