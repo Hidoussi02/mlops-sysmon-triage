@@ -1,21 +1,41 @@
+
 services:
   sysmon-api:
     build: .
     image: sysmon-triage-api:latest
+
+    # Gunicorn configuration
+    command:
+      - gunicorn
+      - --bind
+      - 0.0.0.0:5000
+      - --workers
+      - "2"
+      - --timeout
+      - "60"
+      - --worker-tmp-dir
+      - /tmp
+      - app:app
+
     ports:
-      - "127.0.0.1:5000:5000"        # reachable only from this machine
+      - "127.0.0.1:5000:5000"
+
     volumes:
-      - ./model:/app/model:ro        # trained model, read-only
+      - ./model:/app/model:ro
+
     environment:
       MODEL_DIR: /app/model
       INPUT_FIELD: rule_description
       THRESHOLD: "0.5"
-    # Hardening (good points to mention to the jury)
-    read_only: true                  # container filesystem cannot be modified
+      HOME: /tmp
+      
+    # Security hardening
+    read_only: true
     tmpfs:
       - /tmp
     cap_drop:
-      - ALL                          # no Linux privileges
+      - ALL
     security_opt:
       - no-new-privileges:true
+
     restart: unless-stopped
