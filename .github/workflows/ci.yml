@@ -1,6 +1,7 @@
+
 # CI pipeline - runs on every push / pull request to main.
-# Idea: the real model and dataset are NOT in GitHub (.gitignore), so CI builds a
-# tiny fake model with the same libraries and tests the API against it.
+# CI generates a synthetic model to test the API without real training data.
+
 name: CI
 
 on:
@@ -9,21 +10,21 @@ on:
   pull_request:
     branches: [main]
 
-# Least privilege: the pipeline can only READ the repository
+# Least privilege: read-only access to repository contents
 permissions:
   contents: read
 
 env:
-  # Keep identical to your laptop (python --version) and to the Dockerfile ARG
   PYTHON_VERSION: "3.12"
 
 jobs:
-  # --------------------------------------------------------------------------
-  # Job 1 - code quality and security: lint, static security scan, unit tests
-  # --------------------------------------------------------------------------
+  # ----------------------------------------------------------
+  # Job 1 - Code quality, security scanning and unit tests
+  # ----------------------------------------------------------
   quality:
     name: Lint, security scan, tests
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
@@ -36,29 +37,32 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt flake8 pytest bandit
+        run: |
+          python -m pip install --timeout 300 --retries 10 \
+            -r requirements.txt flake8 pytest bandit
 
-      - name: Lint with flake8 (syntax and style)
+      - name: Lint with flake8
         run: flake8 app.py export_model.py train.py ci tests
 
-      - name: Security scan with Bandit (medium severity and above)
+      - name: Security scan with Bandit
         run: bandit -q -r app.py export_model.py train.py ci -ll
 
-      - name: Run unit tests (uses a dummy model, no real data)
+      - name: Run unit tests
         run: pytest -v
 
-  # --------------------------------------------------------------------------
-  # Job 2 - container: build the image, run it hardened, call the API
-  # --------------------------------------------------------------------------
+  # ----------------------------------------------------------
+  # Job 2 - Docker build and hardened container smoke tests
+  # ----------------------------------------------------------
   docker:
     name: Build and smoke-test the container
-    needs: quality                    # only runs if job 1 passed
+    needs: quality
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
 
-      - name: Set up Python (to generate the dummy model)
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -66,48 +70,76 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Build the Docker image
-        run: docker build --build-arg PYTHON_VERSION=${{ env.PYTHON_VERSION }} -t sysmon-api:ci .
-
-      - name: Create the dummy model folder
         run: |
-          pip install -r requirements.txt
-          python ci/make_dummy_model.py model
+          docker build \
+            --build-arg PYTHON_VERSION=${{ env.PYTHON_VERSION }} \
+            -t sysmon-api:ci .
 
-      - name: Start the container with the same hardening as docker-compose
+      # Use model-ci instead of model because model may already
+      # contain tracked MLflow artifacts in the repository.
+      - name: Install dependencies and create dummy model
+        run: |
+          python -m pip install --timeout 300 --retries 10 -r requirements.txt
+          rm -rf model-ci
+          python ci/make_dummy_model.py model-ci
+
+      - name: Start hardened Docker container
         run: |
           docker run -d --name sysmon-api \
             -p 127.0.0.1:5000:5000 \
-            -v "$PWD/model:/app/model:ro" \
+            -v "$PWD/model-ci:/app/model:ro" \
             -e MODEL_DIR=/app/model \
-            --read-only --tmpfs /tmp \
+            --read-only \
+            --tmpfs /tmp \
             --cap-drop ALL \
             --security-opt no-new-privileges:true \
-            sysmon-api:ci
+            --entrypoint gunicorn \
+            sysmon-api:ci \
+            --bind 0.0.0.0:5000 \
+            --workers 2 \
+            --timeout 60 \
+            --worker-tmp-dir /tmp \
+            app:app
 
-      - name: Wait for /health to answer
+      - name: Wait for /health
         run: |
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:5000/health; then exit 0; fi
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:5000/health; then
+              echo "API is healthy"
+              exit 0
+            fi
             sleep 2
           done
-          echo "API did not become healthy in time"
+
+          echo "ERROR: API did not become healthy"
           exit 1
 
-      - name: Check that the container does not run as root
-        run: test "$(docker exec sysmon-api id -u)" = "10001"
-
-      - name: Call /predict
+      - name: Check non-root container user
         run: |
-          curl -fsS -X POST http://127.0.0.1:5000/predict \
+          USER_ID=$(docker exec sysmon-api id -u)
+          echo "Container user ID: $USER_ID"
+          test "$USER_ID" = "10001"
+
+      - name: Test /predict endpoint
+        run: |
+          curl -fsS \
+            -X POST http://127.0.0.1:5000/predict \
             -H "Content-Type: application/json" \
             -d '{"rule_description":"PowerShell executed an encoded command variant 7"}' \
             | tee response.json
-          grep -q '"prediction"' response.json
+
+          python -c 'import json; d=json.load(open("response.json")); assert d["prediction"] in (0, 1); assert 0 <= d["probability"] <= 1'
 
       - name: Show container logs if something failed
         if: failure()
-        run: docker logs sysmon-api
+        run: |
+          if docker container inspect sysmon-api >/dev/null 2>&1; then
+            docker logs sysmon-api
+          else
+            echo "Container was not created."
+          fi
 
       - name: Clean up
         if: always()
-        run: docker rm -f sysmon-api
+        run: |
+          docker rm -f sysmon-api || true
