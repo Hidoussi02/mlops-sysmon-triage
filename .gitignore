@@ -16,3 +16,11 @@ htmlcov/
 .idea/
 # Temporary model used for Docker CI tests
 model-ci/
+
+model/
+mlruns/
+mlflow.db
+reports/
+data/raw_exports/
+data/*.jsonl
+data/*2.csv
