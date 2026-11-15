@@ -1,0 +1,9 @@
+#!/bin/sh
+WPYTHON_BIN="framework/python/bin/python3"
+SCRIPT_PATH_NAME="$0"
+DIR_NAME="$(cd "$(dirname "${SCRIPT_PATH_NAME}")"; pwd -P)"
+SCRIPT_NAME="$(basename "${SCRIPT_PATH_NAME}")"
+if [ -z "${WAZUH_PATH}" ]; then
+    WAZUH_PATH="$(cd "${DIR_NAME}/.."; pwd)"
+fi
+"${WAZUH_PATH}/${WPYTHON_BIN}" "${DIR_NAME}/${SCRIPT_NAME}.py" "$@"
