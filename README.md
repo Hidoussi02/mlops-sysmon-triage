@@ -100,6 +100,4 @@ Limitations to state plainly:
 Possible improvements: more attack runs and techniques, human-verified labels, additional features
 (source IP, alert rate per minute), a shared DVC remote, and drift monitoring.
 
-## Team
 
-**[fill in who did what: data, training, API/Docker, CI/CD, Wazuh integration, report]**
