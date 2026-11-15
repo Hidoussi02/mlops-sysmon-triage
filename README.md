@@ -84,10 +84,6 @@ leaves the alert untouched. Alerts created by the integration itself are skipped
 - Pipeline permissions are read-only. Bandit scans the Python code on every push.
 - Dependencies are pinned. Runtime and development requirements are separated.
 
-## Data, results and limitations
-
-- Dataset: **[fill in: number of rows, number of malicious rows, dataset version from the .dvc file]**.
-- Best run (see MLflow): **[fill in: precision, recall, F1 for baseline and XGBoost, and the split used]**.
 
 Limitations to state plainly:
 
