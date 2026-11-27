@@ -5,6 +5,7 @@ import logging
 import os
 import secrets
 import sqlite3
+import tempfile
 
 import mlflow.sklearn
 import pandas as pd
@@ -15,7 +16,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 MODEL_DIR = os.getenv("MODEL_DIR", "model")
 INPUT_FIELD = os.getenv("INPUT_FIELD", "rule_description")
 THRESHOLD = float(os.getenv("THRESHOLD", "0.5"))
-DEFAULT_DB = "/tmp/incidents.db" if os.name != "nt" else "incidents.db"
+DEFAULT_DB = os.path.join(tempfile.gettempdir(), "incidents.db")
 DB_PATH = os.getenv("DB_PATH", DEFAULT_DB)
 MAX_LENGTH = 5000
 
@@ -251,4 +252,3 @@ def admin_incidents():
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000)
-    
