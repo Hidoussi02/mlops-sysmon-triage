@@ -1,16 +1,11 @@
-
-# CI pipeline - runs on every push / pull request to main.
-# CI generates a synthetic model to test the API without real training data.
-
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, devsecops-upgrade]
   pull_request:
     branches: [main]
 
-# Least privilege: read-only access to repository contents
 permissions:
   contents: read
 
@@ -19,15 +14,22 @@ env:
 
 jobs:
   # ----------------------------------------------------------
-  # Job 1 - Code quality, security scanning and unit tests
+  # Job 1 - Secrets, SAST, SCA (dependances), lint et tests
   # ----------------------------------------------------------
   quality:
-    name: Lint, security scan, tests
+    name: Secrets, SAST, SCA, lint & tests
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan with Gitleaks (blocking, redacted)
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+            detect --source="/repo" --no-git --redact --exit-code 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -44,17 +46,24 @@ jobs:
       - name: Lint with flake8
         run: flake8 app.py export_model.py train.py ci tests
 
-      - name: Security scan with Bandit
+      - name: SAST security scan with Bandit (blocking on Medium/High)
         run: bandit -q -r app.py export_model.py train.py ci -ll
+
+      - name: Dependency scan with Trivy FS (blocking on fixable CRITICAL)
+        run: |
+          docker run --rm -v "$PWD:/src" aquasec/trivy:latest \
+            fs --severity CRITICAL,HIGH --ignore-unfixed --exit-code 0 /src
+          docker run --rm -v "$PWD:/src" aquasec/trivy:latest \
+            fs --severity CRITICAL --ignore-unfixed --exit-code 1 /src
 
       - name: Run unit tests
         run: pytest -v
 
   # ----------------------------------------------------------
-  # Job 2 - Docker build and hardened container smoke tests
+  # Job 2 - Build multi-stage, Trivy image scan & smoke-tests
   # ----------------------------------------------------------
   docker:
-    name: Build and smoke-test the container
+    name: Build, Trivy image scan & hardened smoke-test
     needs: quality
     runs-on: ubuntu-latest
 
@@ -69,14 +78,23 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Build the Docker image
+      - name: Build the multi-stage Docker image
         run: |
           docker build \
             --build-arg PYTHON_VERSION=${{ env.PYTHON_VERSION }} \
             -t sysmon-api:ci .
 
-      # Use model-ci instead of model because model may already
-      # contain tracked MLflow artifacts in the repository.
+      - name: Container image scan with Trivy (blocking on fixable CRITICAL)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity CRITICAL,HIGH --ignore-unfixed --exit-code 0 sysmon-api:ci
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity CRITICAL --ignore-unfixed --exit-code 1 sysmon-api:ci
+
       - name: Install dependencies and create dummy model
         run: |
           python -m pip install --timeout 300 --retries 10 -r requirements.txt
@@ -89,6 +107,7 @@ jobs:
             -p 127.0.0.1:5000:5000 \
             -v "$PWD/model-ci:/app/model:ro" \
             -e MODEL_DIR=/app/model \
+            -e API_SECRET_KEY=ci-ephemeral-test-secret \
             --read-only \
             --tmpfs /tmp \
             --cap-drop ALL \
@@ -110,15 +129,16 @@ jobs:
             fi
             sleep 2
           done
-
           echo "ERROR: API did not become healthy"
           exit 1
 
-      - name: Check non-root container user
+      - name: Check non-root container user and no .git inside image
         run: |
           USER_ID=$(docker exec sysmon-api id -u)
           echo "Container user ID: $USER_ID"
           test "$USER_ID" = "10001"
+          test ! -d "$(docker exec sysmon-api sh -c 'test -d /app/.git && echo yes || echo no')" || true
+          docker exec sysmon-api sh -c 'test ! -d /app/.git'
 
       - name: Test /predict endpoint
         run: |
@@ -143,3 +163,4 @@ jobs:
         if: always()
         run: |
           docker rm -f sysmon-api || true
+          
