@@ -23,3 +23,9 @@ En cas de détection d'un secret par Gitleaks, l'équipe applique strictement l'
 1. **Révoquer et remplacer d'abord** le secret auprès du fournisseur / gestionnaire de secrets (rendre l'ancienne valeur immédiatement inutilisable).
 2. **Nettoyer ensuite** le fichier dans le dépôt (et purger l'historique Git via `git filter-repo` en environnement de production).
 3. **Vérifier** via un nouveau run CI que Gitleaks ne détecte plus aucune fuite.
+
+## Procédure de gestion d'un secret exposé (Section 4.4)
+En cas de détection d'un secret par Gitleaks, l'équipe applique strictement l'ordre suivant :
+1. **Révoquer et remplacer d'abord** le secret auprès du fournisseur / gestionnaire de secrets (rendre l'ancienne valeur immédiatement inutilisable).
+2. **Nettoyer ensuite** le fichier dans le dépôt (et purger l'historique Git via `git filter-repo` en environnement de production).
+3. **Vérifier** via un nouveau run CI que Gitleaks ne détecte plus aucune fuite.
