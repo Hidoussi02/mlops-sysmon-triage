@@ -37,62 +37,104 @@ log.info("Model loaded from %s", MODEL_DIR)
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
 def init_db():
-    with get_db() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS incidents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                owner_id INTEGER NOT NULL,
-                alert_text TEXT NOT NULL,
-                prediction INTEGER NOT NULL,
-                probability REAL NOT NULL,
-                sensitive_note TEXT NOT NULL
-            )
-            """
-        )
-        if not conn.execute("SELECT 1 FROM users LIMIT 1").fetchone():
-            analyst_pw = os.getenv("DEMO_ANALYST_PASS", "analyst123")
-            admin_pw = os.getenv("DEMO_ADMIN_PASS", "admin123")
-            conn.execute(
-                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                ("analyst", generate_password_hash(analyst_pw), "analyst"),
-            )
-            conn.execute(
-                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                ("admin", generate_password_hash(admin_pw), "admin"),
-            )
+    conn = get_db()
+
+    try:
+        with conn:
+            # Verrouiller l'?criture avant de v?rifier les utilisateurs.
+            conn.execute("BEGIN IMMEDIATE")
+
             conn.execute(
                 """
-                INSERT INTO incidents
-                (owner_id, alert_text, prediction, probability, sensitive_note)
-                VALUES (1, 'Normal Windows login event', 0, 0.02,
-                        'Workstation LAB-PC-01 (fictif)')
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL
+                )
                 """
             )
+
             conn.execute(
                 """
-                INSERT INTO incidents
-                (owner_id, alert_text, prediction, probability, sensitive_note)
-                VALUES (2, 'PowerShell encoded command detected', 1, 0.91,
-                        'CONFIDENTIAL-ADMIN-NOTE: Ticket #999 (fictif)')
+                CREATE TABLE IF NOT EXISTS incidents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id INTEGER NOT NULL,
+                    alert_text TEXT NOT NULL,
+                    prediction INTEGER NOT NULL,
+                    probability REAL NOT NULL,
+                    sensitive_note TEXT NOT NULL
+                )
                 """
             )
+
+            default_users = [
+                ("analyst", os.getenv("DEMO_ANALYST_PASS", "analyst123"), "analyst"),
+                ("admin", os.getenv("DEMO_ADMIN_PASS", "admin123"), "admin"),
+            ]
+
+            for username, password, role in default_users:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO users
+                    (username, password_hash, role)
+                    VALUES (?, ?, ?)
+                    """,
+                    (username, generate_password_hash(password), role),
+                )
+
+            analyst = conn.execute(
+                "SELECT id FROM users WHERE username = ?",
+                ("analyst",),
+            ).fetchone()
+
+            admin = conn.execute(
+                "SELECT id FROM users WHERE username = ?",
+                ("admin",),
+            ).fetchone()
+
+            if not conn.execute(
+                "SELECT 1 FROM incidents LIMIT 1"
+            ).fetchone():
+                conn.execute(
+                    """
+                    INSERT INTO incidents
+                    (owner_id, alert_text, prediction, probability, sensitive_note)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        analyst["id"],
+                        "Normal Windows login event",
+                        0,
+                        0.02,
+                        "Workstation LAB-PC-01 (fictif)",
+                    ),
+                )
+
+                conn.execute(
+                    """
+                    INSERT INTO incidents
+                    (owner_id, alert_text, prediction, probability, sensitive_note)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        admin["id"],
+                        "PowerShell encoded command detected",
+                        1,
+                        0.91,
+                        "CONFIDENTIAL-ADMIN-NOTE: Ticket #999 (fictif)",
+                    ),
+                )
+
+    finally:
+        conn.close()
 
 
 init_db()

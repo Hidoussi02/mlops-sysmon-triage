@@ -21,8 +21,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # XGBoost a besoin de libgomp1
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    libzstd1=1.5.7+dfsg-1+deb13u1 \
+ && rm -rf /var/lib/apt/lists/*
 
 # Moindre privilege : utilisateur non-root
 RUN useradd --create-home --uid 10001 appuser

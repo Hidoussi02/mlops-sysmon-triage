@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, devsecops-upgrade]
+    branches: [main, devsecops-upgrade, 'dev/**']
   pull_request:
     branches: [main]
 
