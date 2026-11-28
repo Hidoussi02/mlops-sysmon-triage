@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sysmon-api
+  namespace: mlops-sec
+  labels:
+    app: sysmon-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sysmon-api
+  template:
+    metadata:
+      labels:
+        app: sysmon-api
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sysmon-api
+          image: sysmon-triage-api:v2
+          imagePullPolicy: Never
+          command:
+            - gunicorn
+            - --bind
+            - 0.0.0.0:5000
+            - --workers
+            - "1"
+            - --timeout
+            - "60"
+            - --worker-tmp-dir
+            - /tmp
+            - app:app
+          ports:
+            - containerPort: 5000
+          env:
+            - name: MODEL_DIR
+              value: /app/model
+            - name: DB_PATH
+              value: /tmp/incidents.db
+            - name: API_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: sysmon-api-secrets
+                  key: API_SECRET_KEY
+            - name: DEMO_ANALYST_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: sysmon-api-secrets
+                  key: DEMO_ANALYST_PASS
+            - name: DEMO_ADMIN_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: sysmon-api-secrets
+                  key: DEMO_ADMIN_PASS
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 45
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: tmp-vol
+              mountPath: /tmp
+            - name: model-vol
+              mountPath: /app/model
+              readOnly: true
+      volumes:
+        - name: tmp-vol
+          emptyDir: {}
+        - name: model-vol
+          configMap:
+            name: sysmon-model
