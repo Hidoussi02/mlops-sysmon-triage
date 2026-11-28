@@ -41,6 +41,7 @@ def test_non_json_body_returns_400(client):
 def test_too_long_text_returns_400(client):
     assert client.post("/predict", json={"rule_description": "a" * 6000}).status_code == 400
 
+
 def test_predict_requires_authentication(client):
     response = client.post(
         "/predict",
