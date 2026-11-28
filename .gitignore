@@ -25,3 +25,5 @@ data/raw_exports/
 data/*.jsonl
 data/*2.csv
 incidents.db
+
+reports/*.html
