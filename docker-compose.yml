@@ -28,6 +28,9 @@ services:
       INPUT_FIELD: rule_description
       THRESHOLD: "0.5"
       HOME: /tmp
+      API_SECRET_KEY: ${API_SECRET_KEY:?API_SECRET_KEY missing from .env}
+      DEMO_ANALYST_PASS: ${DEMO_ANALYST_PASS:?DEMO_ANALYST_PASS missing from .env}
+      DEMO_ADMIN_PASS: ${DEMO_ADMIN_PASS:?DEMO_ADMIN_PASS missing from .env}
       
     # Security hardening
     read_only: true

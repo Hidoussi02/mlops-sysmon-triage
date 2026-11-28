@@ -27,3 +27,6 @@ data/*2.csv
 incidents.db
 
 reports/*.html
+.env
+.env.*
+!.env.example
