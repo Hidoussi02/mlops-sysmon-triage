@@ -108,6 +108,7 @@ jobs:
             -v "$PWD/model-ci:/app/model:ro" \
             -e MODEL_DIR=/app/model \
             -e API_SECRET_KEY=ci-ephemeral-test-secret \
+            -e DEMO_ANALYST_PASS=ci-analyst-test-password \
             --read-only \
             --tmpfs /tmp \
             --cap-drop ALL \
@@ -140,13 +141,16 @@ jobs:
           test ! -d "$(docker exec sysmon-api sh -c 'test -d /app/.git && echo yes || echo no')" || true
           docker exec sysmon-api sh -c 'test ! -d /app/.git'
 
-      - name: Test /predict endpoint
+      - name: Test authentication and /predict endpoint
         run: |
-          curl -fsS \
-            -X POST http://127.0.0.1:5000/predict \
-            -H "Content-Type: application/json" \
-            -d '{"rule_description":"PowerShell executed an encoded command variant 7"}' \
-            | tee response.json
+          unauth_status=$(curl -sS -o unauthenticated.json -w "%{http_code}" -X POST http://127.0.0.1:5000/predict -H "Content-Type: application/json" -d '{"rule_description":"Unauthorized CI test"}')
+          test "$unauth_status" = "401"
+
+          login_response=$(curl -fsS -X POST http://127.0.0.1:5000/login -H "Content-Type: application/json" -d '{"username":"analyst","password":"ci-analyst-test-password"}')
+          token=$(printf '%s' "$login_response" | python -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+          test -n "$token"
+
+          curl -fsS -X POST http://127.0.0.1:5000/predict -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d '{"rule_description":"PowerShell executed an encoded command variant 7"}' | tee response.json
 
           python -c 'import json; d=json.load(open("response.json")); assert d["prediction"] in (0, 1); assert 0 <= d["probability"] <= 1'
 

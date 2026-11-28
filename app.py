@@ -188,6 +188,10 @@ def login():
 
 @app.post("/predict")
 def predict():
+    user = get_current_user()
+    if not user:
+        return jsonify(error="Authentication required"), 401
+
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify(error="Body must be a JSON object"), 400
@@ -196,6 +200,7 @@ def predict():
     if not isinstance(text, str) or not text.strip():
         msg = f"'{INPUT_FIELD}' is required and must be a non-empty string"
         return jsonify(error=msg), 400
+
     if len(text) > MAX_LENGTH:
         msg = f"'{INPUT_FIELD}' is too long (max {MAX_LENGTH} characters)"
         return jsonify(error=msg), 400
@@ -208,18 +213,20 @@ def predict():
             """
             INSERT INTO incidents
             (owner_id, alert_text, prediction, probability, sensitive_note)
-            VALUES (1, ?, ?, ?, 'Auto-triaged alert (fictif)')
+            VALUES (?, ?, ?, ?, 'Auto-triaged alert (fictif)')
             """,
-            (text, prediction, round(score, 4)),
+            (user["id"], text, prediction, round(score, 4)),
         )
 
     log.info(
-        "prediction=%d probability=%.3f input_length=%d",
-        prediction,
-        score,
-        len(text),
+        "prediction=%d probability=%.3f input_length=%d user=%s",
+        prediction, score, len(text), user["username"],
     )
-    return jsonify(prediction=prediction, probability=round(score, 4))
+
+    return jsonify(
+        prediction=prediction,
+        probability=round(score, 4),
+    )
 
 
 @app.get("/incidents/<int:incident_id>")
